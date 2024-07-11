@@ -1,290 +1,240 @@
-"use strict";
-
-// Função para parsing de um arquivo OBJ
-function parseOBJ(text) {
-  const objPositions = [[0, 0, 0]];
-  const objTexcoords = [[0, 0]];
-  const objNormals = [[0, 0, 0]];
-
-  const objVertexData = [
-    objPositions,
-    objTexcoords,
-    objNormals,
-  ];
-
-  let webglVertexData = [
-    [],   // positions
-    [],   // texcoords
-    [],   // normals
-  ];
-
-  const materialLibs = [];
-  const geometries = [];
-  let geometry;
-  let groups = ['default'];
-  let material = 'default';
-  let object = 'default';
-
-  const noop = () => {};
-
-  function newGeometry() {
-    if (geometry && geometry.data.position.length) {
-      geometry = undefined;
-    }
+function main() {
+  const canvas = document.getElementById('glCanvas');
+  const gl = canvas.getContext('webgl2');
+  if (!gl) {
+      console.error('WebGL2 not supported');
+      return;
   }
 
-  function setGeometry() {
-    if (!geometry) {
-      const position = [];
-      const texcoord = [];
-      const normal = [];
-      webglVertexData = [
-        position,
-        texcoord,
-        normal,
-      ];
-      geometry = {
-        object,
-        groups,
-        material,
-        data: {
-          position,
-          texcoord,
-          normal,
-        },
-      };
-      geometries.push(geometry);
-    }
-  }
-
-  function addVertex(vert) {
-    const ptn = vert.split('/');
-    ptn.forEach((objIndexStr, i) => {
-      if (!objIndexStr) {
-        return;
+  // Shader sources
+  const vsSource = `
+      attribute vec4 aVertexPosition;
+      attribute vec3 aVertexNormal;
+      uniform mat4 uModelViewMatrix;
+      uniform mat4 uProjectionMatrix;
+      varying highp vec3 vLighting;
+      void main(void) {
+          gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
+          vLighting = aVertexNormal;
       }
-      const objIndex = parseInt(objIndexStr);
-      const index = objIndex + (objIndex >= 0 ? 0 : objVertexData[i].length);
-      webglVertexData[i].push(...objVertexData[i][index]);
-    });
-  }
+  `;
 
-  const keywords = {
-    v(parts) {
-      objPositions.push(parts.map(parseFloat));
-    },
-    vn(parts) {
-      objNormals.push(parts.map(parseFloat));
-    },
-    vt(parts) {
-      objTexcoords.push(parts.map(parseFloat));
-    },
-    f(parts) {
-      setGeometry();
-      const numTriangles = parts.length - 2;
-      for (let tri = 0; tri < numTriangles; ++tri) {
-        addVertex(parts[0]);
-        addVertex(parts[tri + 1]);
-        addVertex(parts[tri + 2]);
+  const fsSource = `
+      varying highp vec3 vLighting;
+      void main(void) {
+          gl_FragColor = vec4(vLighting, 1.0);
       }
-    },
-    s: noop,    // smoothing group
-    mtllib(parts, unparsedArgs) {
-      materialLibs.push(unparsedArgs);
-    },
-    usemtl(parts, unparsedArgs) {
-      material = unparsedArgs;
-      newGeometry();
-    },
-    g(parts) {
-      groups = parts;
-      newGeometry();
-    },
-    o(parts, unparsedArgs) {
-      object = unparsedArgs;
-      newGeometry();
-    },
+  `;
+
+  // Initialize a shader program
+  const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
+
+  // Collect shader program info
+  const programInfo = {
+      program: shaderProgram,
+      attribLocations: {
+          vertexPosition: gl.getAttribLocation(shaderProgram, 'aVertexPosition'),
+          vertexNormal: gl.getAttribLocation(shaderProgram, 'aVertexNormal'),
+      },
+      uniformLocations: {
+          projectionMatrix: gl.getUniformLocation(shaderProgram, 'uProjectionMatrix'),
+          modelViewMatrix: gl.getUniformLocation(shaderProgram, 'uModelViewMatrix'),
+      },
   };
 
-  const keywordRE = /(\w*)(?: )*(.*)/;
-  const lines = text.split('\n');
-  for (let lineNo = 0; lineNo < lines.length; ++lineNo) {
-    const line = lines[lineNo].trim();
-    if (line === '' || line.startsWith('#')) {
-      continue;
-    }
-    const m = keywordRE.exec(line);
-    if (!m) {
-      continue;
-    }
-    const [, keyword, unparsedArgs] = m;
-    const parts = line.split(/\s+/).slice(1);
-    const handler = keywords[keyword];
-    if (!handler) {
-      console.warn('unhandled keyword:', keyword);
-      continue;
-    }
-    handler(parts, unparsedArgs);
-  }
-
-  for (const geometry of geometries) {
-    geometry.data = Object.fromEntries(
-      Object.entries(geometry.data).filter(([, array]) => array.length > 0));
-  }
-
-  return {
-    geometries,
-    materialLibs,
-  };
+  document.getElementById('loadModel').addEventListener('click', function() {
+      loadOBJModel('trator.obj', gl, programInfo);
+  });
 }
 
-async function main() {
-  const canvas = document.querySelector("#canvas");
-  const gl = canvas.getContext("webgl2");
-  if (!gl) {
-    return;
-  }
+function loadOBJModel(url, gl, programInfo) {
+  fetch(url)
+      .then(response => response.text())
+      .then(data => {
+          console.log('OBJ data loaded successfully:', data);
+          const { vertices, normals, indices } = parseOBJ(data);
+          const buffers = initBuffers(gl, vertices, normals, indices);
+          drawScene(gl, programInfo, buffers);
+      })
+      .catch(error => console.error('Error loading OBJ file:', error));
+}
 
-  twgl.setAttributePrefix("a_");
+function parseOBJ(data) {
+  const lines = data.split('\n');
+  const vertices = [];
+  const normals = [];
+  const indices = [];
 
-  const vs = `#version 300 es
-  in vec4 a_position;
-  in vec3 a_normal;
-
-  uniform mat4 u_projection;
-  uniform mat4 u_view;
-  uniform mat4 u_world;
-
-  out vec3 v_normal;
-
-  void main() {
-    gl_Position = u_projection * u_view * u_world * a_position;
-    v_normal = mat3(u_world) * a_normal;
-  }
-  `;
-
-  const fs = `#version 300 es
-  precision highp float;
-
-  in vec3 v_normal;
-
-  uniform vec4 u_diffuse;
-  uniform vec3 u_lightDirection;
-
-  out vec4 outColor;
-
-  void main () {
-    vec3 normal = normalize(v_normal);
-    float fakeLight = dot(u_lightDirection, normal) * .5 + .5;
-    outColor = vec4(u_diffuse.rgb * fakeLight, u_diffuse.a);
-  }
-  `;
-
-  const meshProgramInfo = twgl.createProgramInfo(gl, [vs, fs]);
-
-  // Aqui você deve ajustar o caminho do seu arquivo .obj
-  const response = await fetch('http://localhost:8080/grama/grama.obj');
-  const text = await response.text();
-  const obj = parseOBJ(text);
-
-  const parts = obj.geometries.map(({ data }) => {
-    const bufferInfo = twgl.createBufferInfoFromArrays(gl, data);
-    const vao = twgl.createVAOFromBufferInfo(gl, meshProgramInfo, bufferInfo);
-    return {
-      material: {
-        u_diffuse: [Math.random(), Math.random(), Math.random(), 1],
-      },
-      bufferInfo,
-      vao,
-    };
+  lines.forEach(line => {
+      const parts = line.trim().split(/\s+/);
+      switch (parts[0]) {
+          case 'v':
+              vertices.push(
+                  parseFloat(parts[1]) * 0.01,  // Convert centimeters to meters
+                  parseFloat(parts[2]) * 0.01,
+                  parseFloat(parts[3]) * 0.01
+              );
+              break;
+          case 'vn':
+              normals.push(
+                  parseFloat(parts[1]),
+                  parseFloat(parts[2]),
+                  parseFloat(parts[3])
+              );
+              break;
+          case 'f':
+              for (let i = 1; i < parts.length; i++) {
+                  const vertex = parts[i].split('//');
+                  indices.push(parseInt(vertex[0]) - 1);
+              }
+              break;
+          default:
+              // Other lines can be ignored for now
+              break;
+      }
   });
 
-  function getExtents(positions) {
-    const min = positions.slice(0, 3);
-    const max = positions.slice(0, 3);
-    for (let i = 3; i < positions.length; i += 3) {
-      for (let j = 0; j < 3; ++j) {
-        const v = positions[i + j];
-        min[j] = Math.min(v, min[j]);
-        max[j] = Math.max(v, max[j]);
-      }
-    }
-    return { min, max };
-  }
+  console.log('Parsed vertices:', vertices);
+  console.log('Parsed normals:', normals);
+  console.log('Parsed indices:', indices);
 
-  function getGeometriesExtents(geometries) {
-    return geometries.reduce(({ min, max }, { data }) => {
-      const minMax = getExtents(data.position);
-      return {
-        min: min.map((min, ndx) => Math.min(minMax.min[ndx], min)),
-        max: max.map((max, ndx) => Math.max(minMax.max[ndx], max)),
-      };
-    }, {
-      min: Array(3).fill(Number.POSITIVE_INFINITY),
-      max: Array(3).fill(Number.NEGATIVE_INFINITY),
-    });
-  }
-
-  const extents = getGeometriesExtents(obj.geometries);
-  const range = m4.subtractVectors(extents.max, extents.min);
-  const objOffset = m4.scaleVector(
-    m4.addVectors(
-      extents.min,
-      m4.scaleVector(range, 0.5)),
-    -1);
-  const cameraTarget = [0, 0, 0];
-  const radius = m4.length(range) * 1.2;
-  const cameraPosition = m4.addVectors(cameraTarget, [
-    0,
-    0,
-    radius,
-  ]);
-  const zNear = radius / 100;
-  const zFar = radius * 3;
-
-  function degToRad(deg) {
-    return deg * Math.PI / 180;
-  }
-
-  function render(time) {
-    time *= 0.001;
-
-    twgl.resizeCanvasToDisplaySize(gl.canvas);
-    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-    gl.enable(gl.DEPTH_TEST);
-
-    const fieldOfViewRadians = degToRad(60);
-    const aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
-    const projection = m4.perspective(fieldOfViewRadians, aspect, zNear, zFar);
-
-    const up = [0, 1, 0];
-    const camera = m4.lookAt(cameraPosition, cameraTarget, up);
-    const view = m4.inverse(camera);
-
-    const sharedUniforms = {
-      u_lightDirection: m4.normalize([-1, 3, 5]),
-      u_view: view,
-      u_projection: projection,
-    };
-
-    gl.useProgram(meshProgramInfo.program);
-    twgl.setUniforms(meshProgramInfo, sharedUniforms);
-
-    let u_world = m4.yRotation(time);
-    u_world = m4.translate(u_world, ...objOffset);
-
-    for (const { bufferInfo, vao, material } of parts) {
-      gl.bindVertexArray(vao);
-      twgl.setUniforms(meshProgramInfo, {
-        u_world,
-        u_diffuse: material.u_diffuse,
-      });
-      twgl.drawBufferInfo(gl, bufferInfo);
-    }
-
-    requestAnimationFrame(render);
-  }
-  requestAnimationFrame(render);
+  return { vertices, normals, indices };
 }
 
-main();
+function initBuffers(gl, vertices, normals, indices) {
+  const vertexBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+
+  const normalBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.STATIC_DRAW);
+
+  const indexBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
+
+  return {
+      vertex: vertexBuffer,
+      normal: normalBuffer,
+      indices: indexBuffer,
+      vertexCount: indices.length,
+  };
+}
+
+function drawScene(gl, programInfo, buffers) {
+  gl.clearColor(0.0, 0.0, 0.0, 1.0);  // Clear to black, fully opaque
+  gl.clearDepth(1.0);                 // Clear everything
+  gl.enable(gl.DEPTH_TEST);           // Enable depth testing
+  gl.depthFunc(gl.LEQUAL);            // Near things obscure far things
+
+  // Clear the canvas before we start drawing on it.
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  const fieldOfView = 45 * Math.PI / 180;   // in radians
+  const aspect = gl.canvas.clientWidth / gl.canvas.clientHeight;
+  const zNear = 0.1;
+  const zFar = 100.0;
+  const projectionMatrix = mat4.create();
+
+  mat4.perspective(projectionMatrix,
+                   fieldOfView,
+                   aspect,
+                   zNear,
+                   zFar);
+
+  const modelViewMatrix = mat4.create();
+
+  mat4.translate(modelViewMatrix,
+                 modelViewMatrix,
+                 [-0.0, 0.0, -6.0]);
+
+  {
+      const numComponents = 3;
+      const type = gl.FLOAT;
+      const normalize = false;
+      const stride = 0;
+      const offset = 0;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffers.vertex);
+      gl.vertexAttribPointer(
+          programInfo.attribLocations.vertexPosition,
+          numComponents,
+          type,
+          normalize,
+          stride,
+          offset);
+      gl.enableVertexAttribArray(
+          programInfo.attribLocations.vertexPosition);
+  }
+
+  {
+      const numComponents = 3;
+      const type = gl.FLOAT;
+      const normalize = false;
+      const stride = 0;
+      const offset = 0;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffers.normal);
+      gl.vertexAttribPointer(
+          programInfo.attribLocations.vertexNormal,
+          numComponents,
+          type,
+          normalize,
+          stride,
+          offset);
+      gl.enableVertexAttribArray(
+          programInfo.attribLocations.vertexNormal);
+  }
+
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffers.indices);
+
+  gl.useProgram(programInfo.program);
+
+  gl.uniformMatrix4fv(
+      programInfo.uniformLocations.projectionMatrix,
+      false,
+      projectionMatrix);
+  gl.uniformMatrix4fv(
+      programInfo.uniformLocations.modelViewMatrix,
+      false,
+      modelViewMatrix);
+
+  {
+      const vertexCount = buffers.vertexCount;
+      const type = gl.UNSIGNED_SHORT;
+      const offset = 0;
+      gl.drawElements(gl.TRIANGLES, vertexCount, type, offset);
+  }
+}
+
+function initShaderProgram(gl, vsSource, fsSource) {
+  const vertexShader = loadShader(gl, gl.VERTEX_SHADER, vsSource);
+  const fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, fsSource);
+
+  const shaderProgram = gl.createProgram();
+  gl.attachShader(shaderProgram, vertexShader);
+  gl.attachShader(shaderProgram, fragmentShader);
+  gl.linkProgram(shaderProgram);
+
+  if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+      console.error('Unable to initialize the shader program: ' + gl.getProgramInfoLog(shaderProgram));
+      return null;
+  }
+
+  return shaderProgram;
+}
+
+function loadShader(gl, type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      console.error('An error occurred compiling the shaders: ' + gl.getShaderInfoLog(shader));
+      gl.deleteShader(shader);
+      return null;
+  }
+
+  return shader;
+}
+
+document.addEventListener('DOMContentLoaded', main);
