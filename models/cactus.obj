@@ -1,6 +1,6 @@
 # This file uses centimeters as units for non-parametric coordinates.
 
-mtllib 仙人掌.mtl
+mtllib cactus.mtl
 v 37.161922 364.441260 119.161296
 v 38.804775 357.937851 121.717146
 v 39.868918 366.469797 123.648578
