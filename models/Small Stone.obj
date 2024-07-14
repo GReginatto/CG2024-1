@@ -1,7 +1,7 @@
 # Blender v2.78 (sub 0) OBJ File: 'Small Stone.blend'
 # www.blender.org
 mtllib Small Stone.mtl
-o Icosphere
+o Cube
 v 0.000000 -0.517029 0.000000
 v 0.723600 -0.447215 0.525720
 v -0.276385 -0.447215 0.850640
