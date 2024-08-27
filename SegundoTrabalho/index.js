@@ -41,14 +41,14 @@ uniform float u_lightRadius;
 
 out vec4 outColor;
 
-// Função para calcular a sombra com PCF (Percentage Closer Filtering)
+
 float calculateShadow(vec3 projectedTexcoord, float currentDepth) {
     float shadow = 0.0;
     
-    // Converte o tamanho do texel de inteiros para floats
+   
     vec2 texelSize = vec2(1.0) / vec2(textureSize(u_projectedTexture, 0));
 
-    // Usando um filtro de 3x3 para suavizar a sombra
+    
     for (int x = -1; x <= 1; x++) {
         for (int y = -1; y <= 1; y++) {
             vec2 offset = vec2(x, y) * texelSize;
