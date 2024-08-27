@@ -13,14 +13,18 @@ uniform mat4 u_textureMatrix;
 out vec2 v_texcoord;
 out vec4 v_projectedTexcoord;
 out vec3 v_normal;
-out vec4 v_worldPosition;
 
 void main() {
-  v_worldPosition = u_world * a_position;
-  gl_Position = u_projection * u_view * v_worldPosition;
+  // Calcula a posição do mundo
+  vec4 worldPosition = u_world * a_position;
 
+  gl_Position = u_projection * u_view * worldPosition;
+
+  // Passa as coordenadas de textura para o fragment shader
   v_texcoord = a_texcoord;
-  v_projectedTexcoord = u_textureMatrix * v_worldPosition;
+  v_projectedTexcoord = u_textureMatrix * worldPosition;
+
+  // Orienta as normais e passa para o fragment shader
   v_normal = mat3(u_world) * a_normal;
 }
 `;
@@ -41,16 +45,12 @@ uniform float u_lightRadius;
 
 out vec4 outColor;
 
-
 float calculateShadow(vec3 projectedTexcoord, float currentDepth) {
     float shadow = 0.0;
-    
-   
     vec2 texelSize = vec2(1.0) / vec2(textureSize(u_projectedTexture, 0));
 
-    
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
+    for (int x = -2; x <= 2; x++) {
+        for (int y = -2; y <= 2; y++) {
             vec2 offset = vec2(x, y) * texelSize;
             float shadowDepth = texture(u_projectedTexture, projectedTexcoord.xy + offset).r;
             float bias = u_bias * (1.0 - dot(v_normal, u_reverseLightDirection));
@@ -58,7 +58,7 @@ float calculateShadow(vec3 projectedTexcoord, float currentDepth) {
         }
     }
 
-    shadow /= 9.0; // Média do filtro de 3x3
+    shadow /= 25.0; // Ajuste para o tamanho do kernel
     return shadow;
 }
 
@@ -69,27 +69,21 @@ void main() {
     vec3 projectedTexcoord = v_projectedTexcoord.xyz / v_projectedTexcoord.w;
     float currentDepth = projectedTexcoord.z + u_bias;
 
-    bool inRange =
-        projectedTexcoord.x >= 0.0 &&
-        projectedTexcoord.x <= 1.0 &&
-        projectedTexcoord.y >= 0.0 &&
-        projectedTexcoord.y <= 1.0;
-
     float shadowLight = 1.0;
-    if (inRange && light > 0.0) {  // Aplique a sombra apenas se a luz estiver presente
+    if (light > 0.0) {
         shadowLight = calculateShadow(projectedTexcoord, currentDepth);
 
         // Suavização adicional para o efeito de penumbra
         float distanceToEdge = length(vec2(0.5) - projectedTexcoord.xy);
-        float penumbra = smoothstep(0.3, 0.6, distanceToEdge / u_lightRadius);
+        float penumbra = smoothstep(0.0, 1.0, distanceToEdge / u_lightRadius);
         shadowLight = mix(shadowLight, 1.0, penumbra);
     }
 
     vec4 texColor = texture(u_texture, v_texcoord) * u_colorMult;
-
     outColor = vec4(texColor.rgb * light * shadowLight, texColor.a);
 }
 `;
+
 
 const colorVS = `#version 300 es
 in vec4 a_position;
@@ -99,10 +93,11 @@ uniform mat4 u_view;
 uniform mat4 u_world;
 
 void main() {
-  // Multiply the position by the matrices.
+  // Multiplica a posição pelas matrizes
   gl_Position = u_projection * u_view * u_world * a_position;
 }
 `;
+
 
 const colorFS = `#version 300 es
 precision highp float;
@@ -197,7 +192,7 @@ function main() {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
   const depthTexture = gl.createTexture();
-  const depthTextureSize = 512;
+  const depthTextureSize = 1024;  // Resolução aumentada
   gl.bindTexture(gl.TEXTURE_2D, depthTexture);
   gl.texImage2D(
     gl.TEXTURE_2D,
@@ -236,13 +231,14 @@ function main() {
     targetX: 3.5,
     targetY: 0,
     targetZ: 3.5,
-    projWidth: 20,
-    projHeight: 20,
+    projWidth: 30,
+    projHeight: 30,
     perspective: false,
-    fieldOfView: 120,
+    fieldOfView: 150,
     bias: -0.006,
     lightRadius: 0.2,
   };
+
   webglLessonsUI.setupUI(document.querySelector('#ui'), settings, [
     { type: 'slider', key: 'cameraX', min: -10, max: 10, change: render, precision: 2, step: 0.001, },
     { type: 'slider', key: 'cameraY', min: 1, max: 20, change: render, precision: 2, step: 0.001, },
