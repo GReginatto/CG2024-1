@@ -15,18 +15,18 @@ out vec4 v_projectedTexcoord;
 out vec3 v_normal;
 
 void main() {
-  // Calcula a posição do mundo
   vec4 worldPosition = u_world * a_position;
-
+  
   gl_Position = u_projection * u_view * worldPosition;
 
-  // Passa as coordenadas de textura para o fragment shader
   v_texcoord = a_texcoord;
   v_projectedTexcoord = u_textureMatrix * worldPosition;
 
-  // Orienta as normais e passa para o fragment shader
   v_normal = mat3(u_world) * a_normal;
 }
+
+
+
 `;
 
 const fs = `#version 300 es
@@ -48,17 +48,20 @@ out vec4 outColor;
 float calculateShadow(vec3 projectedTexcoord, float currentDepth) {
     float shadow = 0.0;
     vec2 texelSize = vec2(1.0) / vec2(textureSize(u_projectedTexture, 0));
+    int samples = 4;  // Adjust the number of samples for PCF
+    int range = samples / 2;
 
-    for (int x = -2; x <= 2; x++) {
-        for (int y = -2; y <= 2; y++) {
+    
+    for (int x = -range; x <= range; x++) {
+        for (int y = -range; y <= range; y++) {
             vec2 offset = vec2(x, y) * texelSize;
             float shadowDepth = texture(u_projectedTexture, projectedTexcoord.xy + offset).r;
-            float bias = u_bias * (1.0 - dot(v_normal, u_reverseLightDirection));
+            float bias = u_bias * (1.0 - dot(normalize(v_normal), u_reverseLightDirection));
             shadow += currentDepth - bias > shadowDepth ? 0.0 : 1.0;
         }
     }
 
-    shadow /= 25.0; // Ajuste para o tamanho do kernel
+    shadow /= float((samples + 1) * (samples + 1));  // Normalize the shadow factor
     return shadow;
 }
 
@@ -73,15 +76,15 @@ void main() {
     if (light > 0.0) {
         shadowLight = calculateShadow(projectedTexcoord, currentDepth);
 
-        // Suavização adicional para o efeito de penumbra
         float distanceToEdge = length(vec2(0.5) - projectedTexcoord.xy);
-        float penumbra = smoothstep(0.0, 1.0, distanceToEdge / u_lightRadius);
+        float penumbra = smoothstep(0.0, 1.0, distanceToEdge / (u_lightRadius * 2.0));  // Adjust softness
         shadowLight = mix(shadowLight, 1.0, penumbra);
     }
 
     vec4 texColor = texture(u_texture, v_texcoord) * u_colorMult;
     outColor = vec4(texColor.rgb * light * shadowLight, texColor.a);
 }
+
 `;
 
 
